@@ -4,6 +4,7 @@ from scipy.optimize import minimize
 from IPython import embed
 from surrogatemodels import GP,MultiOutputGP
 from sklearn.cluster import KMeans
+import scipydirect
 '''
 some useful utils functions needed by BO
 '''
@@ -132,8 +133,8 @@ class BO(object):
     #     plt.tight_layout()
     #     plt.savefig("./" + str(self.iterations)+".png")
 
-    def optimize_acq_f(self, n_iter=50):
-        # optimization of aquisition function to get next query point x
+    def optimize_acq_f(self, n_iter=50, method = "DIRECT"):
+                # optimization of aquisition function to get next query point x
         def obj_LBFGS(x):
             return -self.acq_f(x)
 
@@ -143,21 +144,32 @@ class BO(object):
         ys = -obj_LBFGS(x_tries)
         x_max = x_tries[ys.argmax()].reshape((1, -1))
         max_acq = ys.max()
-        for x_try in x_seeds:
-            # Find the minimum of minus the acquisition function
-            res = minimize(obj_LBFGS,
-                            x_try.reshape(1, -1),
-                            bounds=self.reformat_bounds(self.bounds),
-                            method="L-BFGS-B")
+        if(method == "LBFGS"):
+            for x_try in x_seeds:
+                # Find the minimum of minus the acquisition function
+                res = minimize(obj_LBFGS,
+                                x_try.reshape(1, -1),
+                                bounds=self.reformat_bounds(self.bounds),
+                                method="L-BFGS-B")
 
-            # See if success
-            if not res.success:
-                continue
+                # See if success
+                if not res.success:
+                    continue
 
-            # Store it if better than previous minimum(maximum).
-            if max_acq is None or -res.fun[0] > max_acq:
-                x_max = res.x
-                max_acq = -res.fun[0]
+                # Store it if better than previous minimum(maximum).
+                if max_acq is None or -res.fun[0] > max_acq:
+                    x_max = res.x
+                    max_acq = -res.fun[0]
+        elif(method == "DIRECT"):
+            ys = -obj_LBFGS(x_tries)
+            x_max = x_tries[ys.argmax()].reshape((1, -1))
+            max_acq = ys.max()
+            x = scipydirect.minimize(obj_LBFGS, self.reformat_bounds(self.bounds)).x
+            acq = -obj_LBFGS(x)[0,0]
+            if (acq > max_acq):
+                x_max = x
+        else:
+            raise NotImplementedError
 
         return np.clip(x_max, self.bounds[0, :], self.bounds[1, :]).reshape((1, -1))
 
@@ -240,7 +252,7 @@ class MaximumEntropySearch(object):
         if (self.iterations == 0):
             self.initializeGPs()
         while (self.iterations < self.num_iterations):
-            self.plot()
+            #self.plot()
             print("X:{}".format(np.concatenate(self.gp.X), 0))
             print("Y:{}".format(np.concatenate(self.gp.Y), 0))
             self.gp.optimizeModel()
@@ -299,7 +311,7 @@ class MaximumEntropySearch(object):
         plt.savefig("./" + str(self.iterations)+".png")      
         #embed() 
 
-    def optimize_acq_f(self, n_iter=50):
+    def optimize_acq_f(self, n_iter=50, method = "LBFGS"):
         # optimization of aquisition function to get next query point x
         def obj_LBFGS(x):
             return -self.acq_f(x)
@@ -310,21 +322,32 @@ class MaximumEntropySearch(object):
         ys = -obj_LBFGS(x_tries)
         x_max = x_tries[ys.argmax()].reshape((1, -1))
         max_acq = ys.max()
-        for x_try in x_seeds:
-            # Find the minimum of minus the acquisition function
-            res = minimize(obj_LBFGS,
-                            x_try.reshape(1, -1),
-                            bounds=self.reformat_bounds(self.bounds),
-                            method="L-BFGS-B")
+        if(method == "LBFGS"):
+            for x_try in x_seeds:
+                # Find the minimum of minus the acquisition function
+                res = minimize(obj_LBFGS,
+                                x_try.reshape(1, -1),
+                                bounds=self.reformat_bounds(self.bounds),
+                                method="L-BFGS-B")
 
-            # See if success
-            if not res.success:
-                continue
+                # See if success
+                if not res.success:
+                    continue
 
-            # Store it if better than previous minimum(maximum).
-            if max_acq is None or -res.fun[0] > max_acq:
-                x_max = res.x
-                max_acq = -res.fun[0]
+                # Store it if better than previous minimum(maximum).
+                if max_acq is None or -res.fun[0] > max_acq:
+                    x_max = res.x
+                    max_acq = -res.fun[0]
+        elif(method == "DIRECT"):
+            ys = -obj_LBFGS(x_tries)
+            x_max = x_tries[ys.argmax()].reshape((1, -1))
+            max_acq = ys.max()
+            x = scipydirect.minimize(obj_LBFGS, self.reformat_bounds(self.bounds)).x
+            acq = -obj_LBFGS(x)[0,0]
+            if (acq > max_acq):
+                x_max = x
+        else:
+            raise NotImplementedError
 
         return np.clip(x_max, self.bounds[0, :], self.bounds[1, :]).reshape((1, -1))
 
@@ -358,7 +381,7 @@ class MaximumEntropySearch(object):
 
 if __name__ == "__main__":
 
-    demo = "MES"
+    demo = "GP-UCB"
     if(demo == "GP-UCB"):
         paras_gp={}
         paras_gp["input_dim"] = 2
@@ -384,15 +407,15 @@ if __name__ == "__main__":
         bo.optimize()
     elif(demo == "MES"):
         paras_gp={}
-        paras_gp["input_dim"] = 1
+        paras_gp["input_dim"] = 2
         paras_gp["output_dim"] = 2
         paras_gp["rank"] = 1
         paras_gp["noise_variance"] = [0.01**2, 0.01**2]
         paras_gp["fixed_noise_variance"] = True
-        paras_gp["lengthscales"] = np.array([1])
+        paras_gp["lengthscales"] = np.array([1,1])
         paras_gp["mean_value"] = [0]
         paras_gp["kernel_variance"] = 1**2
-        paras_gp["bounds"] = np.array([[0],[1]])
+        paras_gp["bounds"] = np.array([[0,0],[1,1]])
 
         paras_opt = {}
         paras_opt["num_iterations"] = 100
@@ -402,7 +425,7 @@ if __name__ == "__main__":
         paras["opt"] = paras_opt
 
         def f(x):
-            return np.concatenate([x * np.sin(2*x), np.sin(6*x + 0.7)],1)
+            return x
 
         mes = MaximumEntropySearch(f, paras)
         mes.optimize()
