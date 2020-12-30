@@ -71,6 +71,8 @@ class MultiOutputGP(object):
         self.kernel_variance = paras["kernel_variance"]
         self.X=[]
         self.Y=[]
+        self.x = []
+        self.y = []
 
     def addData(self, x, y):
         '''
@@ -81,13 +83,15 @@ class MultiOutputGP(object):
         for i in range(self.output_dim):
             self.X.append(np.hstack([x, i * np.ones((x.shape[0],1))]))
             self.Y.append(np.hstack([y[:,i].reshape((-1,1)), i * np.ones((x.shape[0],1))]))
+        self.x.append(x)
+        self.y.append(y)
 
     def optimizeModel(self):
         output_dim = self.output_dim
         rank = self.rank
-        k = gpflow.kernels.Matern52(self.kernel_variance, self.lengthscales, active_dims= np.arange(self.input_dim).tolist())
-        coreg = gpflow.kernels.Coregion(output_dim=output_dim, rank=rank, active_dims=[self.input_dim])
-        k = k * coreg
+        self.k = gpflow.kernels.Matern52(self.kernel_variance, self.lengthscales, active_dims= np.arange(self.input_dim).tolist())
+        self.coreg = gpflow.kernels.Coregion(output_dim=output_dim, rank=rank, active_dims=[self.input_dim])
+        k = self.k * self.coreg
         X = np.concatenate(self.X, 0)
         Y = np.concatenate(self.Y, 0)
         X = X.reshape((X.shape[0], -1))
@@ -97,6 +101,7 @@ class MultiOutputGP(object):
 
         # now build the GP model as normal
         self.gp = gpflow.models.VGP((X,Y), kernel=k, likelihood=lik, mean_function = meanf)
+        #set_trainable(self.gp.mean_function.c, False)
         for i in range(self.output_dim):
             self.gp.likelihood.likelihoods[i].variance.assign(self.noise_variance[i])
         if(self.fixed_noise_variance):
@@ -113,6 +118,17 @@ class MultiOutputGP(object):
             means.append(means_dim.numpy())
             variances.append(variances_dim.numpy())
         return np.concatenate(means,1), np.concatenate(variances,1)
+
+    def covariance(self,x):
+        means, variances = self.predict(x)
+        x_obv = np.concatenate(self.x, 0)
+        y_obv = np.concatenate(self.y, 0)
+        WWT = self.coreg.output_covariance().numpy()
+        cov = np.dot(means.T, means)
+        sigma = self.k.K(x).numpy() - self.k.K(x, x_obv).numpy().dot(np.linalg.inv(self.k.K(x_obv,x_obv).numpy() + np.diag([self.noise_variance[0]]*x_obv.shape[0]))).dot(self.k.K(x_obv,x).numpy())
+        cov = WWT * sigma 
+        return cov
+
 
 
 
@@ -173,7 +189,7 @@ if __name__ == "__main__":
         x = (np.arange(100)*0.01).reshape((-1,1))
         y = f(x)
 
-        x_train = np.random.rand(5).reshape((-1,1))
+        x_train = np.random.rand(2).reshape((-1,1))
         y_train =  f(x_train)
         gp.addData(x_train, y_train)
         gp.optimizeModel()
@@ -182,6 +198,8 @@ if __name__ == "__main__":
         #plot functions
         plt.plot(x, y[:,0], label = "objective function dim 0",color = "tab:blue")
         plt.plot(x, y[:,1], label = "objective function dim 1", color = "tab:orange")
+
+        cov = gp.covariance(np.array([[0.15]]))
         means, variances = gp.predict(x.reshape((-1, 1)))
 
         plt.plot(x, means[:,0], color = "tab:red", label = "prediction 0")
